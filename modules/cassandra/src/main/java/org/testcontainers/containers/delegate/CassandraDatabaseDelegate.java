@@ -5,6 +5,7 @@ import com.datastax.driver.core.Session;
 import com.datastax.driver.core.exceptions.DriverException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
 import org.testcontainers.containers.CassandraContainer;
 import org.testcontainers.containers.ContainerState;
 import org.testcontainers.delegate.AbstractDatabaseDelegate;

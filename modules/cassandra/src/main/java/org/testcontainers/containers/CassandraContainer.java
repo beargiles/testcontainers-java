@@ -22,32 +22,53 @@ import java.util.Optional;
  *
  * @author Eugeny Karpov
  */
-public class CassandraContainer<SELF extends CassandraContainer<SELF>> extends GenericContainer<SELF> {
+public class CassandraContainer<SELF extends CassandraContainer<SELF>> extends JdbcDatabaseContainer<SELF> {
 
-    public static final String IMAGE = "cassandra";
+    public static final String NAME = "cassandra";
     public static final Integer CQL_PORT = 9042;
+    public static final Integer THRIFT_PORT = 9160;
+    public static final Integer JMX_PORT = 7199;
     private static final String CONTAINER_CONFIG_LOCATION = "/etc/cassandra";
     private static final String USERNAME = "cassandra";
     private static final String PASSWORD = "cassandra";
+    private static final String DEFAULT_DRIVER_CLASSNAME = "com.github.adejanovski.cassandra.jdbc.CassandraDriver";
+
+    public static final String IMAGE = "cassandra";
+    public static final String DEFAULT_TAG = "3.11.2";
 
     private String configLocation;
     private String initScriptPath;
+    private boolean enableNativeAPI;
     private boolean enableJmxReporting;
+    private String driverClassname = DEFAULT_DRIVER_CLASSNAME;
 
     public CassandraContainer() {
-        this(IMAGE + ":3.11.2");
+        this(IMAGE + ":" + DEFAULT_TAG);
     }
 
     public CassandraContainer(String dockerImageName) {
         super(dockerImageName);
         addExposedPort(CQL_PORT);
         setStartupAttempts(3);
+        this.enableNativeAPI = false;
         this.enableJmxReporting = false;
+    }
+
+    @Override
+    protected Integer getLivenessCheckPort() {
+        return getMappedPort(CQL_PORT);
     }
 
     @Override
     protected void configure() {
         optionallyMapResourceParameterAsVolume(CONTAINER_CONFIG_LOCATION, configLocation);
+        if (enableNativeAPI) {
+            addExposedPort(THRIFT_PORT);
+            addEnv("CASSANDRA_START_RPC", "true");
+        }
+        if (enableJmxReporting) {
+            addExposedPort(JMX_PORT);
+        }
     }
 
     @Override
@@ -58,7 +79,7 @@ public class CassandraContainer<SELF extends CassandraContainer<SELF>> extends G
     /**
      * Load init script content and apply it to the database if initScriptPath is set
      */
-    private void runInitScriptIfRequired() {
+    protected void runInitScriptIfRequired() {
         if (initScriptPath != null) {
             try {
                 URL resource = Thread.currentThread().getContextClassLoader().getResource(initScriptPath);
@@ -119,6 +140,24 @@ public class CassandraContainer<SELF extends CassandraContainer<SELF>> extends G
     }
 
     /**
+     * Initialize Cassandra with Native support (via thrift over RPC) with default driver classname.
+     * This is usually required for JDBC access.
+     */
+    public SELF withNativeAPI(boolean enableNativeAPI) {
+        return withNativeAPI(enableNativeAPI, DEFAULT_DRIVER_CLASSNAME);
+    }
+
+    /**
+     * Initialize Cassandra with Native support (via thrift over RPC) using specified driver classname.
+     * This is usually required for JDBC access.
+     */
+    public SELF withNativeAPI(boolean enableNativeAPI, String driverClassname) {
+        this.enableNativeAPI = enableNativeAPI;
+        this.driverClassname = driverClassname;
+        return self();
+    }
+
+    /**
      * Initialize Cassandra client with JMX reporting enabled or disabled
      */
     public SELF withJmxReporting(boolean enableJmxReporting) {
@@ -151,6 +190,64 @@ public class CassandraContainer<SELF extends CassandraContainer<SELF>> extends G
     }
 
     /**
+     * Get recommended driver classname.
+     */
+    @Override
+    public String getDriverClassName() {
+        return driverClassname;
+    }
+
+    /**
+     * Get JDBC URL
+     *
+     * Returns appropriate JDBC URL if JDBC support is enabled. Otherwise throws UnsupportedOperationException.
+     * If a keyspace is used it should be appended to the URL.
+     */
+    @Override
+    public String getJdbcUrl() {
+        if (enableNativeAPI) {
+            return "jdbc:cassandra://" + getContainerIpAddress() + ":" + getMappedPort(THRIFT_PORT);
+        }
+        throw new UnsupportedOperationException();
+    }
+
+    /**
+     * Gets SQL query that can be used to verify the server is up. This query returns
+     * the server release version.
+     */
+    @Override
+    protected String getTestQueryString() {
+        return "SELECT release_version FROM system.local";
+    }
+
+    /**
+     * Get mapped JQL port.
+     *
+     * @return
+     */
+    public int getCqlPort() {
+        return getMappedPort(CQL_PORT);
+    }
+
+    /**
+     * Get mapped Native (thrift-over-RPC) port. This is used by most JDBC driver implementations.
+     *
+     * @return thrift port, or -1 if NativeAPI is not enabled
+     */
+    public int getNativePort() {
+        return enableNativeAPI ? getMappedPort(THRIFT_PORT) : -1;
+    }
+
+    /**
+     * Get mapped JMX port.
+     *
+     * @return jmx port, or -1 if JMX is not enabled
+     */
+    public int getJmxPort() {
+        return enableJmxReporting ? getMappedPort(JMX_PORT) : -1;
+    }
+
+    /**
      * Get configured Cluster
      *
      * Can be used to obtain connections to Cassandra in the container
@@ -173,7 +270,15 @@ public class CassandraContainer<SELF extends CassandraContainer<SELF>> extends G
         return getCluster(containerState, false);
     }
 
-    private DatabaseDelegate getDatabaseDelegate() {
+    /**
+     * Close down server. This has no effect.
+     */
+    @Override
+    public void close() {
+        // no-op
+    }
+
+    protected DatabaseDelegate getDatabaseDelegate() {
         return new CassandraDatabaseDelegate(this);
     }
 }

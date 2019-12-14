@@ -6,9 +6,18 @@ import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import lombok.extern.slf4j.Slf4j;
 import org.junit.Test;
+import org.testcontainers.containers.output.OutputFrame;
 import org.testcontainers.containers.wait.CassandraQueryWaitStrategy;
+import org.testcontainers.containers.wait.strategy.HostPortWaitStrategy;
+
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.time.Duration;
 
 import static org.junit.Assert.*;
+
+import static java.time.temporal.ChronoUnit.SECONDS;
 
 /**
  * @author Eugeny Karpov
@@ -103,6 +112,23 @@ public class CassandraContainerTest {
             ResultSet resultSet = performQuery(cassandraContainer.getCluster(), "SELECT release_version FROM system.local");
             assertTrue("Query was not applied", resultSet.wasApplied());
             assertNotNull("Result set has no release_version", resultSet.one().getString(0));
+        }
+    }
+
+    @Test
+    public void testCassandraJdbcQuery() throws SQLException {
+        try (CassandraContainer cassandraContainer = new CassandraContainer<>().withNativeAPI(true)) {
+            cassandraContainer.withLogConsumer(obj -> System.out.println(((OutputFrame) obj).getUtf8String().trim()));
+            // this doesn't seem to have any effect
+            //cassandraContainer.setWaitStrategy(new HostPortWaitStrategy().withStartupTimeout(Duration.of(90, SECONDS)));
+            cassandraContainer.setWaitStrategy(new CassandraQueryWaitStrategy());
+            cassandraContainer.start();
+            try (Connection conn = cassandraContainer.createConnection("");
+                    Statement stmt = conn.createStatement();
+                    java.sql.ResultSet rs = stmt.executeQuery("SELECT release_version FROM system.local")) {
+                assertTrue("no records found", rs.next());
+                assertEquals("Result set has no release_version", cassandraContainer.DEFAULT_TAG, rs.getString("release_version"));
+            }
         }
     }
 
